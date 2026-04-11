@@ -1,0 +1,24 @@
+# EVAS PDP Maker — Ralph Progress
+
+## Phase 1: Foundation (COMPLETE)
+- Next.js 14 + TypeScript strict + Tailwind + shadcn
+- Supabase project ketyyrhkhfqecucsidfv: 8 tables, RBAC RLS, 4 brands seeded, 3 storage buckets
+- Zustand stores: editor-store (undo/redo), project-store
+- Types: editor, pdp, brand, figma
+- Build + typecheck passing
+
+## Decisions
+- Text framing: B+C (relative ranking + admin correction)
+- Figma: REST API import + Plugin export
+- API keys: admin assigns per user (profiles.gemini_api_key)
+- RBAC: admin/editor/viewer roles with RLS
+
+## Iteration Log
+
+### Iteration 1 (Phase 2+3 parallel)
+- US-P2-01 PASS: lib/figma/import.ts, lib/figma/text-framing.ts, components/panel/ComponentPalette.tsx, app/api/figma/import/route.ts, lib/supabase/admin.ts
+- US-P3-01 PASS: components/panel/ProductInfoPanel.tsx, components/panel/AgentChatPanel.tsx, app/api/ai/chat/route.ts, lib/ai/copywriting-agent.ts, UI components (button, input, textarea)
+- Editor layout shell created: app/editor/[projectId]/page.tsx + editor-shell.tsx
+- Tabs UI component added
+- CLAUDE.md updated with content Supabase project
+- NOTE: US-P2-02 and US-P3-02 both modify editor-shell.tsx — merge needed after both complete

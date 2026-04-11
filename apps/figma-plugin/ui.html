@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EVAS PDP Maker Export</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      color: #333;
+      background: #fff;
+      padding: 16px;
+    }
+    h2 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #111;
+    }
+    p {
+      color: #666;
+      font-size: 12px;
+      margin-bottom: 12px;
+      line-height: 1.5;
+    }
+    textarea {
+      width: 100%;
+      height: 220px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      padding: 10px;
+      font-size: 11px;
+      font-family: monospace;
+      resize: vertical;
+      outline: none;
+      line-height: 1.4;
+    }
+    textarea:focus { border-color: #7c3aed; }
+    button {
+      margin-top: 10px;
+      width: 100%;
+      padding: 10px;
+      background: #7c3aed;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover { background: #6d28d9; }
+    button:disabled { background: #ccc; cursor: not-allowed; }
+    #status {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #666;
+      text-align: center;
+      min-height: 18px;
+    }
+    #status.success { color: #16a34a; }
+    #status.error { color: #dc2626; }
+  </style>
+</head>
+<body>
+  <h2>EVAS PDP Maker Import</h2>
+  <p>EVAS PDP Maker에서 복사한 JSON 데이터를 붙여넣고 "Figma로 가져오기" 버튼을 누르세요.</p>
+  <textarea id="jsonInput" placeholder='{"projectName": "...", "sections": [...]}' spellcheck="false"></textarea>
+  <button id="importBtn">Figma로 가져오기</button>
+  <div id="status"></div>
+
+  <script>
+    const importBtn = document.getElementById('importBtn');
+    const jsonInput = document.getElementById('jsonInput');
+    const status = document.getElementById('status');
+
+    importBtn.addEventListener('click', () => {
+      const raw = jsonInput.value.trim();
+      if (!raw) {
+        showStatus('JSON 데이터를 붙여넣기 하세요.', 'error');
+        return;
+      }
+
+      let data;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        showStatus('올바른 JSON 형식이 아닙니다.', 'error');
+        return;
+      }
+
+      if (!data.projectName || !Array.isArray(data.sections)) {
+        showStatus('JSON 형식이 맞지 않습니다 (projectName, sections 필요).', 'error');
+        return;
+      }
+
+      importBtn.disabled = true;
+      showStatus('Figma에 가져오는 중...', '');
+
+      parent.postMessage({ pluginMessage: { type: 'import-pdp', data } }, '*');
+    });
+
+    window.onmessage = (event) => {
+      const msg = event.data.pluginMessage;
+      if (!msg) return;
+      if (msg.type === 'import-complete') {
+        importBtn.disabled = false;
+        showStatus('가져오기 완료!', 'success');
+      }
+    };
+
+    function showStatus(msg, type) {
+      status.textContent = msg;
+      status.className = type;
+    }
+  </script>
+</body>
+</html>

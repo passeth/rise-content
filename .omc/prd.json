@@ -1,0 +1,208 @@
+{
+  "project": "EVAS PDP Maker",
+  "stories": [
+    {
+      "id": "US-P2-01",
+      "phase": 2,
+      "title": "Figma Import + Text Framing + Component Palette",
+      "priority": 1,
+      "passes": true,
+      "acceptanceCriteria": [
+        "lib/figma/import.ts exports fetchFigmaNodes(fileKey, nodeId, token) that returns parsed FigmaImportResult",
+        "lib/figma/text-framing.ts exports classifyTextSlots() using relative fontSize ranking (B+C approach) — largest=headline, 2nd=subheadline, rest=body/caption",
+        "components/panel/ComponentPalette.tsx renders brand-filtered component list with thumbnails from DB",
+        "app/api/figma/import/route.ts accepts POST {fileKey, nodeId, brandId} and creates component in DB",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P2-02",
+      "phase": 2,
+      "title": "Canvas Editor Core (DnD + Sections + Text Editing)",
+      "priority": 2,
+      "passes": true,
+      "acceptanceCriteria": [
+        "components/editor/Canvas.tsx accepts drops from ComponentPalette and creates CanvasSection instances",
+        "components/editor/Section.tsx renders text_slots and image_slots at correct positions using react-rnd",
+        "components/editor/TextEditor.tsx supports inline contentEditable text editing in each text slot",
+        "Sections can be reordered via drag, deleted, and resized",
+        "editor-store undo/redo works for add/remove/edit operations",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P2-03",
+      "phase": 2,
+      "title": "Editor Layout + Project Save/Load",
+      "priority": 3,
+      "passes": true,
+      "acceptanceCriteria": [
+        "app/editor/[projectId]/page.tsx renders 3-panel layout: ComponentPalette (left) + Canvas (center) + right panel placeholder",
+        "components/editor/Toolbar.tsx renders undo/redo/zoom controls",
+        "Save button persists canvas_state to Supabase projects table (URL references only, no base64)",
+        "Loading /editor/{id} restores full canvas state from DB",
+        "Auto-save with 3-second debounce on canvas changes",
+        "pnpm build passes"
+      ]
+    },
+    {
+      "id": "US-P3-01",
+      "phase": 3,
+      "title": "Product Info Form + Brand Expert Agent Chat",
+      "priority": 1,
+      "passes": true,
+      "acceptanceCriteria": [
+        "components/panel/ProductInfoPanel.tsx has form fields: productName, productNameEn, mainConcept, ingredients",
+        "components/panel/AgentChatPanel.tsx renders multi-turn chat UI with message history",
+        "app/api/ai/chat/route.ts streams Gemini responses using ReadableStream",
+        "System prompt includes EVAS brand guidelines + cosmetics marketing expertise",
+        "Chat history saved to chat_histories table per project",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P3-02",
+      "phase": 3,
+      "title": "Agent Output Summary (Copy/USP/Mood)",
+      "priority": 4,
+      "passes": true,
+      "acceptanceCriteria": [
+        "Agent chat has 'Summarize' button that triggers structured output extraction",
+        "Extracted fields: mainCopy, tagline, usp, designMood, toneAndManner saved to project.agent_context",
+        "Summary card displays extracted fields below chat, editable inline",
+        "project-store.updateAgentContext() persists to Supabase",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P4-01",
+      "phase": 4,
+      "title": "PDP Blueprint Generation (Layout-Aware)",
+      "priority": 5,
+      "passes": true,
+      "acceptanceCriteria": [
+        "lib/ai/pdp-service.ts contains buildAnalyzePrompt() ported from reference with layout constraint extensions",
+        "Blueprint generation accepts canvas text_slots info and generates text fitting each slot's maxLength/role",
+        "app/api/pdp/analyze/route.ts accepts POST with productInfo + agentContext + canvasLayout",
+        "Generated blueprint stored in project.blueprint",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P4-02",
+      "phase": 4,
+      "title": "Content-to-Canvas Auto-Placement",
+      "priority": 6,
+      "passes": true,
+      "acceptanceCriteria": [
+        "After blueprint generation, text content auto-fills matching canvas text slots by role (headline->headline slot, etc.)",
+        "Section-by-section content can be manually edited in canvas after auto-fill",
+        "Re-generate button per section regenerates only that section's text",
+        "Canvas isDirty flag set after auto-placement",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P5-01",
+      "phase": 5,
+      "title": "Image Generation Pipeline + Reference Controls",
+      "priority": 5,
+      "passes": true,
+      "acceptanceCriteria": [
+        "lib/ai/image-service.ts contains buildImagePrompt(), buildImageStyleInstructions(), identity lock loop ported from reference",
+        "components/panel/ImageGenPanel.tsx has upload areas for product/model/reference images",
+        "Reference element buttons (color, composition, pose, lighting, angle, concept, props) toggle selection",
+        "Selected elements modify prompt generation via buildReferenceElementPrompt()",
+        "app/api/pdp/images/route.ts retrieves user's gemini_api_key from profiles table",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P5-02",
+      "phase": 5,
+      "title": "Image Gallery + Prompt Improvement",
+      "priority": 7,
+      "passes": true,
+      "acceptanceCriteria": [
+        "components/gallery/SectionGallery.tsx shows all generated images per section as thumbnail grid",
+        "Clicking a thumbnail sets is_selected=true and deselects others for that section",
+        "Selected image appears in canvas image_slot",
+        "Prompt improvement button sends current prompt + 'improve this' instruction to Gemini",
+        "Generated images saved to Supabase Storage (generated-images bucket) and URL stored in generated_images table",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P6-01",
+      "phase": 6,
+      "title": "Multi-Language Translation",
+      "priority": 8,
+      "passes": true,
+      "acceptanceCriteria": [
+        "lib/ai/translation-service.ts translates all canvas text to 5 languages (en, zh, ja, vi, ru)",
+        "Translation uses en blueprint fields as base, falls back to ko",
+        "brands.protected_terms preserved as-is during translation",
+        "components/panel/TranslationPanel.tsx shows language tabs with preview per language",
+        "Translations saved to translations table per project+language",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P6-02",
+      "phase": 6,
+      "title": "Export (JPG + Figma Plugin)",
+      "priority": 9,
+      "passes": true,
+      "acceptanceCriteria": [
+        "JPG export renders canvas sections as images using server-side approach, downloads as ZIP with language variants",
+        "apps/figma-plugin/manifest.json and code.ts exist with valid Figma Plugin structure",
+        "Figma plugin receives canvas data via postMessage and creates Figma frames/text/image nodes",
+        "Export toolbar buttons trigger respective export flows",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P7-01",
+      "phase": 7,
+      "title": "Admin Dashboard (Users + API Keys + Brands)",
+      "priority": 4,
+      "passes": true,
+      "acceptanceCriteria": [
+        "app/(admin)/admin/users/page.tsx lists users with role and API key status",
+        "Admin can assign/update Gemini API key per user",
+        "Admin can change user role (admin/editor/viewer)",
+        "app/(admin)/admin/brands/page.tsx allows CRUD on brands (name, slug, color_palette, protected_terms)",
+        "Admin routes protected by role check — non-admin redirected",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P7-02",
+      "phase": 7,
+      "title": "Component Management (Figma Import UI)",
+      "priority": 4,
+      "passes": true,
+      "acceptanceCriteria": [
+        "app/(admin)/admin/components/page.tsx lists components per brand with thumbnails",
+        "Import form accepts Figma file URL, parses fileKey/nodeId, triggers import API",
+        "After import, admin can review and correct auto-classified text slot roles via dropdown",
+        "Admin can manually create components with JSON text_slots/image_slots definition",
+        "pnpm typecheck passes with zero errors"
+      ]
+    },
+    {
+      "id": "US-P8-01",
+      "phase": 8,
+      "title": "Polish + Deploy",
+      "priority": 10,
+      "passes": true,
+      "acceptanceCriteria": [
+        "Error boundaries and loading states on all async operations",
+        "pnpm build passes with zero warnings",
+        "pnpm typecheck passes with zero errors",
+        "Vercel deployment config exists (vercel.json or auto-detect)",
+        "CLAUDE.md updated with content Supabase project info"
+      ]
+    }
+  ]
+}

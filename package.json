@@ -1,0 +1,12 @@
+{
+  "name": "rise-content",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.0.0",
+  "scripts": {
+    "dev": "pnpm --filter @evas/web dev",
+    "build": "pnpm --filter @evas/web build",
+    "typecheck": "pnpm --filter @evas/web typecheck",
+    "lint": "pnpm --filter @evas/web lint"
+  }
+}
