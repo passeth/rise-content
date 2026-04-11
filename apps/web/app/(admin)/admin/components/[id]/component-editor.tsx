@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { TextSlotTemplate, ImageSlotTemplate, TextSlotStyle } from "@/lib/types/brand";
@@ -29,6 +29,13 @@ interface ComponentEditorProps {
   brandName: string;
 }
 
+// ---- Slot selection type ----
+type SelectedSlot =
+  | { type: "text"; id: string }
+  | { type: "image"; id: string }
+  | null;
+
+// ---- Constants ----
 const CATEGORY_OPTIONS: { value: ComponentCategory; label: string }[] = [
   { value: "hero", label: "Hero" },
   { value: "benefit", label: "Benefit" },
@@ -61,18 +68,20 @@ const TEXT_ALIGN_OPTIONS: { value: "left" | "center" | "right"; label: string }[
   { value: "right", label: "Right" },
 ];
 
+const ROLE_BADGE_COLORS: Record<TextRole, string> = {
+  headline: "bg-purple-100 text-purple-700",
+  subheadline: "bg-blue-100 text-blue-700",
+  body: "bg-gray-100 text-gray-700",
+  caption: "bg-yellow-100 text-yellow-700",
+  cta: "bg-green-100 text-green-700",
+};
+
+// ---- Utilities ----
 function generateId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function labelClass(text: string) {
-  return (
-    <span className="block text-xs font-medium text-muted-foreground mb-1">
-      {text}
-    </span>
-  );
-}
-
+// ---- Style helpers ----
 const inputCls =
   "w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
@@ -85,6 +94,26 @@ const selectCls =
 const smallSelectCls =
   "w-full rounded border border-border bg-background px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring";
 
+function Label({ text }: { text: string }) {
+  return (
+    <span className="block text-xs font-medium text-muted-foreground mb-1">
+      {text}
+    </span>
+  );
+}
+
+function PanelSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="border-b border-border pb-4 mb-4 last:border-b-0 last:pb-0 last:mb-0">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+        {title}
+      </h3>
+      {children}
+    </div>
+  );
+}
+
+// ---- Main component ----
 export function ComponentEditor({ component, brandName }: ComponentEditorProps) {
   const router = useRouter();
 
@@ -97,11 +126,11 @@ export function ComponentEditor({ component, brandName }: ComponentEditorProps) 
 
   // Template data dimensions
   const templateData = component.template_data ?? {};
-  const [width, setWidth] = useState<string>(
-    String(typeof templateData.width === "number" ? templateData.width : "")
+  const [width, setWidth] = useState<number>(
+    typeof templateData.width === "number" ? templateData.width : 375
   );
-  const [height, setHeight] = useState<string>(
-    String(typeof templateData.height === "number" ? templateData.height : "")
+  const [height, setHeight] = useState<number>(
+    typeof templateData.height === "number" ? templateData.height : 400
   );
 
   // Slots
@@ -113,101 +142,106 @@ export function ComponentEditor({ component, brandName }: ComponentEditorProps) 
   );
 
   // UI state
-  const [expandedStyleSlots, setExpandedStyleSlots] = useState<
-    Record<string, boolean>
-  >({});
+  const [selectedSlot, setSelectedSlot] = useState<SelectedSlot>(null);
+  const [expandedStyle, setExpandedStyle] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // --- Text slot helpers ---
-  function updateTextSlot<K extends keyof TextSlotTemplate>(
-    index: number,
-    key: K,
-    value: TextSlotTemplate[K]
-  ) {
-    setTextSlots((prev) => {
-      const next = [...prev];
-      next[index] = { ...next[index], [key]: value };
-      return next;
-    });
-  }
+  // Canvas scale: fit within 500px wide
+  const CANVAS_MAX_WIDTH = 500;
+  const scale = Math.min(1, CANVAS_MAX_WIDTH / width);
 
-  function updateTextSlotStyle<K extends keyof TextSlotStyle>(
-    index: number,
-    key: K,
-    value: TextSlotStyle[K]
-  ) {
-    setTextSlots((prev) => {
-      const next = [...prev];
-      const slot = { ...next[index] };
-      slot.style = { ...slot.style, [key]: value };
-      next[index] = slot;
-      return next;
-    });
-  }
+  // ---- Text slot helpers ----
+  const updateTextSlot = useCallback(
+    <K extends keyof TextSlotTemplate>(id: string, key: K, value: TextSlotTemplate[K]) => {
+      setTextSlots((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, [key]: value } : s))
+      );
+    },
+    []
+  );
+
+  const updateTextSlotStyle = useCallback(
+    <K extends keyof TextSlotStyle>(id: string, key: K, value: TextSlotStyle[K]) => {
+      setTextSlots((prev) =>
+        prev.map((s) =>
+          s.id === id ? { ...s, style: { ...s.style, [key]: value } } : s
+        )
+      );
+    },
+    []
+  );
 
   function addTextSlot() {
+    const id = generateId();
     setTextSlots((prev) => [
       ...prev,
       {
-        id: generateId(),
-        role: "body",
-        x: 0,
-        y: 0,
+        id,
+        role: "body" as TextRole,
+        x: Math.round(width / 2 - 100),
+        y: Math.round(height / 2 - 30),
         width: 200,
         height: 60,
         fontSize: 16,
         fontWeight: 400,
+        sampleText: "텍스트",
       },
     ]);
+    setSelectedSlot({ type: "text", id });
   }
 
-  function removeTextSlot(index: number) {
-    setTextSlots((prev) => prev.filter((_, i) => i !== index));
+  function removeTextSlot(id: string) {
+    setTextSlots((prev) => prev.filter((s) => s.id !== id));
+    if (selectedSlot?.type === "text" && selectedSlot.id === id) {
+      setSelectedSlot(null);
+    }
   }
 
-  // --- Image slot helpers ---
-  function updateImageSlot<K extends keyof ImageSlotTemplate>(
-    index: number,
-    key: K,
-    value: ImageSlotTemplate[K]
-  ) {
-    setImageSlots((prev) => {
-      const next = [...prev];
-      next[index] = { ...next[index], [key]: value };
-      return next;
-    });
-  }
+  // ---- Image slot helpers ----
+  const updateImageSlot = useCallback(
+    <K extends keyof ImageSlotTemplate>(id: string, key: K, value: ImageSlotTemplate[K]) => {
+      setImageSlots((prev) =>
+        prev.map((s) => (s.id === id ? { ...s, [key]: value } : s))
+      );
+    },
+    []
+  );
 
   function addImageSlot() {
+    const id = generateId();
     setImageSlots((prev) => [
       ...prev,
       {
-        id: generateId(),
-        x: 0,
-        y: 0,
+        id,
+        x: Math.round(width / 2 - 100),
+        y: Math.round(height / 2 - 100),
         width: 200,
         height: 200,
         purpose: "",
       },
     ]);
+    setSelectedSlot({ type: "image", id });
   }
 
-  function removeImageSlot(index: number) {
-    setImageSlots((prev) => prev.filter((_, i) => i !== index));
+  function removeImageSlot(id: string) {
+    setImageSlots((prev) => prev.filter((s) => s.id !== id));
+    if (selectedSlot?.type === "image" && selectedSlot.id === id) {
+      setSelectedSlot(null);
+    }
   }
 
-  // --- Save ---
+  // ---- Save ----
   async function handleSave() {
     setSaving(true);
     setSaveError(null);
     try {
       const updatedTemplateData: Record<string, unknown> = {
         ...templateData,
+        width,
+        height,
       };
-      if (width !== "") updatedTemplateData.width = Number(width);
-      if (height !== "") updatedTemplateData.height = Number(height);
 
       const res = await fetch("/api/admin/components", {
         method: "PATCH",
@@ -235,7 +269,7 @@ export function ComponentEditor({ component, brandName }: ComponentEditorProps) 
     }
   }
 
-  // --- Delete ---
+  // ---- Delete ----
   async function handleDelete() {
     if (
       !confirm(
@@ -262,40 +296,46 @@ export function ComponentEditor({ component, brandName }: ComponentEditorProps) 
     }
   }
 
-  const canvasWidth = Number(width) || 375;
-  const canvasHeight = Number(height) || 400;
-  // Scale preview to fit within 500px wide
-  const previewScale = Math.min(1, 500 / canvasWidth);
+  // Resolve current selected slot data
+  const selectedTextSlot =
+    selectedSlot?.type === "text"
+      ? textSlots.find((s) => s.id === selectedSlot.id) ?? null
+      : null;
+
+  const selectedImageSlot =
+    selectedSlot?.type === "image"
+      ? imageSlots.find((s) => s.id === selectedSlot.id) ?? null
+      : null;
 
   return (
-    <div className="space-y-8 max-w-5xl">
+    <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between pb-4 border-b border-border mb-4">
         <div>
-          <p className="text-sm text-muted-foreground mb-1">
+          <p className="text-sm text-muted-foreground mb-0.5">
             <span className="font-medium text-foreground">{brandName}</span>
             {" / "}컴포넌트 편집
           </p>
-          <h1 className="text-2xl font-semibold text-foreground">{component.name}</h1>
+          <h1 className="text-xl font-semibold text-foreground">{component.name}</h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <Link
             href="/admin/components"
-            className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
           >
             목록으로
           </Link>
           <button
             onClick={handleDelete}
             disabled={deleting}
-            className="rounded-md border border-destructive px-4 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
+            className="rounded-md border border-destructive px-3 py-1.5 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
           >
             {deleting ? "삭제 중..." : "삭제"}
           </button>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            className="rounded-md bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
           >
             {saving ? "저장 중..." : "저장"}
           </button>
@@ -303,694 +343,1092 @@ export function ComponentEditor({ component, brandName }: ComponentEditorProps) 
       </div>
 
       {saveError && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-2 text-sm text-destructive mb-4">
           {saveError}
         </div>
       )}
 
-      {/* 1. Basic Info */}
-      <section className="rounded-lg border border-border bg-card p-6">
-        <h2 className="text-base font-medium mb-5">기본 정보</h2>
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-          <div>
-            {labelClass("이름")}
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className={inputCls}
-            />
-          </div>
-
-          <div>
-            {labelClass("카테고리")}
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value as ComponentCategory)}
-              className={selectCls}
-            >
-              {CATEGORY_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            {labelClass("레이아웃")}
-            <select
-              value={layoutType}
-              onChange={(e) => setLayoutType(e.target.value as LayoutType)}
-              className={selectCls}
-            >
-              {LAYOUT_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            {labelClass("버전")}
-            <input
-              type="text"
-              value={String(component.version)}
-              readOnly
-              className={`${inputCls} bg-muted text-muted-foreground`}
-            />
-          </div>
-
-          <div>
-            {labelClass("Figma 파일 키")}
-            <input
-              type="text"
-              value={component.figma_file_key ?? "—"}
-              readOnly
-              className={`${inputCls} bg-muted text-muted-foreground font-mono text-xs`}
-            />
-          </div>
-
-          <div>
-            {labelClass("Figma 노드 ID")}
-            <input
-              type="text"
-              value={component.figma_node_id ?? "—"}
-              readOnly
-              className={`${inputCls} bg-muted text-muted-foreground font-mono text-xs`}
-            />
-          </div>
-        </div>
-      </section>
-
-      {/* 2. Preview Area */}
-      <section className="rounded-lg border border-border bg-card p-6">
-        <h2 className="text-base font-medium mb-5">미리보기</h2>
-
-        <div className="flex items-center gap-4 mb-4">
-          <div>
-            {labelClass("너비 (px)")}
-            <input
-              type="number"
-              value={width}
-              onChange={(e) => setWidth(e.target.value)}
-              className={`${inputCls} w-28`}
-            />
-          </div>
-          <div>
-            {labelClass("높이 (px)")}
-            <input
-              type="number"
-              value={height}
-              onChange={(e) => setHeight(e.target.value)}
-              className={`${inputCls} w-28`}
-            />
-          </div>
-          <div className="self-end pb-1">
-            <span className="text-xs text-muted-foreground">
-              {canvasWidth} × {canvasHeight}px
-            </span>
-          </div>
-        </div>
-
-        <div className="overflow-auto rounded-md border border-border bg-muted/20 p-4">
+      {/* Two-column layout */}
+      <div className="flex gap-6 flex-1 min-h-0">
+        {/* ── LEFT: Visual Canvas (60%) ── */}
+        <div className="flex-[3] flex flex-col min-w-0">
           <div
-            className="relative bg-white border border-border/50 mx-auto"
+            className="flex-1 rounded-lg border border-border overflow-auto p-4"
             style={{
-              width: canvasWidth * previewScale,
-              height: canvasHeight * previewScale,
+              background:
+                "repeating-conic-gradient(#e5e7eb 0% 25%, #f9fafb 0% 50%) 0 0 / 16px 16px",
             }}
+            onClick={() => setSelectedSlot(null)}
           >
-            {/* Text slots */}
-            {textSlots.map((slot) => (
-              <div
-                key={slot.id}
-                className="absolute border border-blue-400/60 bg-blue-50/40 flex items-center justify-center overflow-hidden"
-                style={{
-                  left: slot.x * previewScale,
-                  top: slot.y * previewScale,
-                  width: slot.width * previewScale,
-                  height: slot.height * previewScale,
-                  backgroundColor: slot.style?.backgroundColor
-                    ? slot.style.backgroundColor + "33"
-                    : undefined,
-                }}
-                title={`${slot.role}: ${slot.sampleText ?? ""}`}
-              >
-                <span
-                  className="truncate px-1 text-center"
-                  style={{ fontSize: Math.max(8, slot.fontSize * previewScale) }}
-                >
-                  {slot.sampleText || slot.role}
-                </span>
-              </div>
-            ))}
-
-            {/* Image slots */}
-            {imageSlots.map((slot) => (
-              <div
-                key={slot.id}
-                className="absolute border border-emerald-400/60 bg-emerald-50/40 flex items-center justify-center"
-                style={{
-                  left: slot.x * previewScale,
-                  top: slot.y * previewScale,
-                  width: slot.width * previewScale,
-                  height: slot.height * previewScale,
-                }}
-                title={slot.purpose}
-              >
-                <span className="text-[9px] text-emerald-600 text-center px-1 truncate">
-                  {slot.purpose || "image"}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-3 border border-blue-400 bg-blue-50 rounded-sm" />
-            텍스트 슬롯
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="inline-block w-3 h-3 border border-emerald-400 bg-emerald-50 rounded-sm" />
-            이미지 슬롯
-          </span>
-        </div>
-      </section>
-
-      {/* 3. Text Slots Editor */}
-      <section className="rounded-lg border border-border bg-card p-6">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-base font-medium">
-            텍스트 슬롯{" "}
-            <span className="text-sm font-normal text-muted-foreground">
-              ({textSlots.length})
-            </span>
-          </h2>
-        </div>
-
-        {textSlots.length === 0 && (
-          <p className="text-sm text-muted-foreground mb-4">
-            텍스트 슬롯이 없습니다.
-          </p>
-        )}
-
-        <div className="space-y-4">
-          {textSlots.map((slot, index) => (
+            {/* Canvas container — scaled */}
             <div
-              key={slot.id}
-              className="rounded-md border border-border bg-background p-4 space-y-4"
+              className="relative mx-auto bg-white shadow-md"
+              style={{
+                width: width * scale,
+                height: height * scale,
+                transformOrigin: "top left",
+              }}
             >
-              {/* Header row */}
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono text-muted-foreground">
-                  #{index + 1} {slot.id}
-                </span>
-                <button
-                  onClick={() => removeTextSlot(index)}
-                  className="rounded px-2 py-0.5 text-xs border border-destructive text-destructive hover:bg-destructive/10"
-                >
-                  X 삭제
-                </button>
-              </div>
+              {/* Image slots — behind text */}
+              {imageSlots.map((slot) => (
+                <CanvasImageSlot
+                  key={slot.id}
+                  slot={slot}
+                  scale={scale}
+                  isSelected={selectedSlot?.type === "image" && selectedSlot.id === slot.id}
+                  onSelect={() => setSelectedSlot({ type: "image", id: slot.id })}
+                  onDelete={() => removeImageSlot(slot.id)}
+                  onUpdate={updateImageSlot}
+                />
+              ))}
 
-              {/* Role + sampleText */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  {labelClass("역할 (role)")}
-                  <select
-                    value={slot.role}
-                    onChange={(e) =>
-                      updateTextSlot(index, "role", e.target.value as TextRole)
-                    }
-                    className={selectCls}
-                  >
-                    {TEXT_ROLE_OPTIONS.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  {labelClass("샘플 텍스트")}
-                  <textarea
-                    value={slot.sampleText ?? ""}
-                    onChange={(e) =>
-                      updateTextSlot(index, "sampleText", e.target.value)
-                    }
-                    rows={2}
-                    className={`${inputCls} resize-none`}
-                  />
-                </div>
-              </div>
+              {/* Text slots */}
+              {textSlots.map((slot) => (
+                <CanvasTextSlot
+                  key={slot.id}
+                  slot={slot}
+                  scale={scale}
+                  isSelected={selectedSlot?.type === "text" && selectedSlot.id === slot.id}
+                  onSelect={() => setSelectedSlot({ type: "text", id: slot.id })}
+                  onDelete={() => removeTextSlot(slot.id)}
+                  onUpdate={updateTextSlot}
+                  canvasWidth={width}
+                  canvasHeight={height}
+                />
+              ))}
 
-              {/* Position */}
-              <div>
-                {labelClass("위치 (position)")}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <span className="text-xs text-muted-foreground">X</span>
-                    <input
-                      type="number"
-                      value={slot.x}
-                      onChange={(e) =>
-                        updateTextSlot(index, "x", Number(e.target.value))
-                      }
-                      className={smallInputCls}
-                    />
-                  </div>
-                  <div>
-                    <span className="text-xs text-muted-foreground">Y</span>
-                    <input
-                      type="number"
-                      value={slot.y}
-                      onChange={(e) =>
-                        updateTextSlot(index, "y", Number(e.target.value))
-                      }
-                      className={smallInputCls}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Size */}
-              <div>
-                {labelClass("크기 (size)")}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <span className="text-xs text-muted-foreground">너비</span>
-                    <input
-                      type="number"
-                      value={slot.width}
-                      onChange={(e) =>
-                        updateTextSlot(index, "width", Number(e.target.value))
-                      }
-                      className={smallInputCls}
-                    />
-                  </div>
-                  <div>
-                    <span className="text-xs text-muted-foreground">높이</span>
-                    <input
-                      type="number"
-                      value={slot.height}
-                      onChange={(e) =>
-                        updateTextSlot(index, "height", Number(e.target.value))
-                      }
-                      className={smallInputCls}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Font */}
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  {labelClass("폰트 크기")}
-                  <input
-                    type="number"
-                    value={slot.fontSize}
-                    onChange={(e) =>
-                      updateTextSlot(index, "fontSize", Number(e.target.value))
-                    }
-                    className={smallInputCls}
-                  />
-                </div>
-                <div>
-                  {labelClass("폰트 굵기")}
-                  <select
-                    value={slot.fontWeight}
-                    onChange={(e) =>
-                      updateTextSlot(index, "fontWeight", Number(e.target.value))
-                    }
-                    className={smallSelectCls}
-                  >
-                    {FONT_WEIGHT_OPTIONS.map((w) => (
-                      <option key={w} value={w}>
-                        {w}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  {labelClass("최대 글자 수")}
-                  <input
-                    type="number"
-                    value={slot.maxLength ?? ""}
-                    onChange={(e) =>
-                      updateTextSlot(
-                        index,
-                        "maxLength",
-                        e.target.value === "" ? undefined : Number(e.target.value)
-                      )
-                    }
-                    placeholder="없음"
-                    className={smallInputCls}
-                  />
-                </div>
-              </div>
-
-              {/* Style expandable */}
-              <div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setExpandedStyleSlots((prev) => ({
-                      ...prev,
-                      [slot.id]: !prev[slot.id],
+              {/* Height resize handle */}
+              <CanvasResizeHandle
+                scale={scale}
+                height={height}
+                onHeightChange={(newHeight) => {
+                  const ratio = newHeight / height;
+                  setHeight(newHeight);
+                  setTextSlots((prev) =>
+                    prev.map((s) => ({ ...s, y: Math.round(s.y * ratio) }))
+                  );
+                  setImageSlots((prev) =>
+                    prev.map((s) => ({
+                      ...s,
+                      y: Math.round(s.y * ratio),
+                      height: Math.round(s.height * ratio),
                     }))
-                  }
-                  className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                >
-                  <span>{expandedStyleSlots[slot.id] ? "▼" : "▶"}</span>
-                  스타일 {expandedStyleSlots[slot.id] ? "접기" : "펼치기"}
-                </button>
+                  );
+                }}
+              />
+            </div>
+          </div>
 
-                {expandedStyleSlots[slot.id] && (
-                  <div className="mt-3 grid grid-cols-2 gap-3 p-3 rounded-md bg-muted/30 border border-border">
-                    {/* backgroundColor */}
-                    <div className="col-span-2">
-                      {labelClass("배경색")}
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={slot.style?.backgroundColor ?? "#ffffff"}
-                          onChange={(e) =>
-                            updateTextSlotStyle(
-                              index,
-                              "backgroundColor",
-                              e.target.value
-                            )
-                          }
-                          className="h-8 w-10 rounded border border-border cursor-pointer"
-                        />
-                        <input
-                          type="text"
-                          value={slot.style?.backgroundColor ?? ""}
-                          onChange={(e) =>
-                            updateTextSlotStyle(
-                              index,
-                              "backgroundColor",
-                              e.target.value
-                            )
-                          }
-                          placeholder="#ffffff"
-                          className={`${smallInputCls} flex-1`}
-                        />
-                      </div>
-                    </div>
+          {/* Add slot buttons */}
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={addTextSlot}
+              className="flex-1 rounded-md border border-dashed border-border py-2 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+            >
+              + 텍스트 추가
+            </button>
+            <button
+              onClick={addImageSlot}
+              className="flex-1 rounded-md border border-dashed border-border py-2 text-sm text-muted-foreground hover:border-emerald-500 hover:text-emerald-600 transition-colors"
+            >
+              + 이미지 추가
+            </button>
+          </div>
 
-                    {/* textColor */}
-                    <div className="col-span-2">
-                      {labelClass("텍스트 색상")}
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="color"
-                          value={slot.style?.textColor ?? "#000000"}
-                          onChange={(e) =>
-                            updateTextSlotStyle(index, "textColor", e.target.value)
-                          }
-                          className="h-8 w-10 rounded border border-border cursor-pointer"
-                        />
-                        <input
-                          type="text"
-                          value={slot.style?.textColor ?? ""}
-                          onChange={(e) =>
-                            updateTextSlotStyle(index, "textColor", e.target.value)
-                          }
-                          placeholder="#000000"
-                          className={`${smallInputCls} flex-1`}
-                        />
-                      </div>
-                    </div>
+          {/* Canvas size indicator */}
+          <p className="text-xs text-muted-foreground text-center mt-2">
+            {width} × {height}px
+            {scale < 1 && ` (${Math.round(scale * 100)}% 축소)`}
+          </p>
+        </div>
 
-                    {/* padding */}
-                    <div>
-                      {labelClass("패딩")}
-                      <input
-                        type="text"
-                        value={slot.style?.padding ?? ""}
-                        onChange={(e) =>
-                          updateTextSlotStyle(index, "padding", e.target.value)
-                        }
-                        placeholder="15px 25px"
-                        className={smallInputCls}
-                      />
-                    </div>
-
-                    {/* borderRadius */}
-                    <div>
-                      {labelClass("Border Radius")}
-                      <input
-                        type="text"
-                        value={slot.style?.borderRadius ?? ""}
-                        onChange={(e) =>
-                          updateTextSlotStyle(
-                            index,
-                            "borderRadius",
-                            e.target.value
-                          )
-                        }
-                        placeholder="50px"
-                        className={smallInputCls}
-                      />
-                    </div>
-
-                    {/* border */}
-                    <div>
-                      {labelClass("Border")}
-                      <input
-                        type="text"
-                        value={slot.style?.border ?? ""}
-                        onChange={(e) =>
-                          updateTextSlotStyle(index, "border", e.target.value)
-                        }
-                        placeholder="2px solid #4b1f7e"
-                        className={smallInputCls}
-                      />
-                    </div>
-
-                    {/* textAlign */}
-                    <div>
-                      {labelClass("텍스트 정렬")}
-                      <select
-                        value={slot.style?.textAlign ?? "left"}
-                        onChange={(e) =>
-                          updateTextSlotStyle(
-                            index,
-                            "textAlign",
-                            e.target.value as "left" | "center" | "right"
-                          )
-                        }
-                        className={smallSelectCls}
-                      >
-                        {TEXT_ALIGN_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* letterSpacing */}
-                    <div>
-                      {labelClass("자간 (letterSpacing)")}
-                      <input
-                        type="text"
-                        value={slot.style?.letterSpacing ?? ""}
-                        onChange={(e) =>
-                          updateTextSlotStyle(
-                            index,
-                            "letterSpacing",
-                            e.target.value
-                          )
-                        }
-                        placeholder="-0.52px"
-                        className={smallInputCls}
-                      />
-                    </div>
-
-                    {/* lineHeight */}
-                    <div>
-                      {labelClass("행간 (lineHeight)")}
-                      <input
-                        type="number"
-                        value={slot.style?.lineHeight ?? ""}
-                        onChange={(e) =>
-                          updateTextSlotStyle(
-                            index,
-                            "lineHeight",
-                            e.target.value === ""
-                              ? undefined
-                              : Number(e.target.value)
-                          )
-                        }
-                        placeholder="1.5"
-                        step="0.1"
-                        className={smallInputCls}
-                      />
-                    </div>
+        {/* ── RIGHT: Property Panel (40%) ── */}
+        <div className="flex-[2] overflow-y-auto space-y-0 min-w-0 max-h-[calc(100vh-10rem)]">
+          <div className="rounded-lg border border-border bg-card p-4 space-y-0">
+            {/* Section 1: 기본 정보 */}
+            <PanelSection title="기본 정보">
+              <div className="space-y-3">
+                <div>
+                  <Label text="이름" />
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className={inputCls}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label text="카테고리" />
+                    <select
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value as ComponentCategory)}
+                      className={selectCls}
+                    >
+                      {CATEGORY_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                  <div>
+                    <Label text="레이아웃" />
+                    <select
+                      value={layoutType}
+                      onChange={(e) => setLayoutType(e.target.value as LayoutType)}
+                      className={selectCls}
+                    >
+                      {LAYOUT_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <Label text="캔버스 크기" />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={width}
+                      onChange={(e) => setWidth(Number(e.target.value))}
+                      className={`${smallInputCls} flex-1`}
+                      placeholder="가로"
+                    />
+                    <span className="text-xs text-muted-foreground">×</span>
+                    <input
+                      type="number"
+                      value={height}
+                      onChange={(e) => setHeight(Number(e.target.value))}
+                      className={`${smallInputCls} flex-1`}
+                      placeholder="세로"
+                    />
+                    <span className="text-xs text-muted-foreground">px</span>
+                  </div>
+                </div>
+              </div>
+            </PanelSection>
+
+            {/* Section 2: Selected slot properties */}
+            {selectedTextSlot && (
+              <PanelSection title="텍스트 슬롯 속성">
+                <TextSlotPanel
+                  slot={selectedTextSlot}
+                  expandedStyle={expandedStyle}
+                  onToggleStyle={() => setExpandedStyle((v) => !v)}
+                  onUpdate={updateTextSlot}
+                  onUpdateStyle={updateTextSlotStyle}
+                />
+              </PanelSection>
+            )}
+
+            {selectedImageSlot && (
+              <PanelSection title="이미지 슬롯 속성">
+                <ImageSlotPanel
+                  slot={selectedImageSlot}
+                  onUpdate={updateImageSlot}
+                />
+              </PanelSection>
+            )}
+
+            {!selectedSlot && (
+              <PanelSection title="슬롯 속성">
+                <p className="text-xs text-muted-foreground">
+                  캔버스에서 슬롯을 클릭하면 속성이 표시됩니다.
+                </p>
+              </PanelSection>
+            )}
+
+            {/* Section 3: Slot list */}
+            <PanelSection title="슬롯 목록">
+              {textSlots.length === 0 && imageSlots.length === 0 && (
+                <p className="text-xs text-muted-foreground">슬롯이 없습니다.</p>
+              )}
+              {textSlots.length > 0 && (
+                <div className="mb-2">
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                    텍스트 ({textSlots.length})
+                  </p>
+                  <div className="space-y-1">
+                    {textSlots.map((slot) => (
+                      <button
+                        key={slot.id}
+                        onClick={() => setSelectedSlot({ type: "text", id: slot.id })}
+                        className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors ${
+                          selectedSlot?.type === "text" && selectedSlot.id === slot.id
+                            ? "bg-blue-50 border border-blue-300"
+                            : "hover:bg-muted border border-transparent"
+                        }`}
+                      >
+                        <span
+                          className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                            ROLE_BADGE_COLORS[slot.role]
+                          }`}
+                        >
+                          {slot.role}
+                        </span>
+                        <span className="truncate text-muted-foreground">
+                          {slot.sampleText || "(빈 텍스트)"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {imageSlots.length > 0 && (
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">
+                    이미지 ({imageSlots.length})
+                  </p>
+                  <div className="space-y-1">
+                    {imageSlots.map((slot) => (
+                      <button
+                        key={slot.id}
+                        onClick={() => setSelectedSlot({ type: "image", id: slot.id })}
+                        className={`w-full text-left px-2 py-1.5 rounded text-xs flex items-center gap-2 transition-colors ${
+                          selectedSlot?.type === "image" && selectedSlot.id === slot.id
+                            ? "bg-emerald-50 border border-emerald-300"
+                            : "hover:bg-muted border border-transparent"
+                        }`}
+                      >
+                        <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-100 text-emerald-700">
+                          img
+                        </span>
+                        <span className="truncate text-muted-foreground">
+                          {slot.purpose || "(용도 없음)"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </PanelSection>
+
+            {/* Section 4: Actions */}
+            <PanelSection title="저장 / 삭제">
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="w-full rounded-md bg-primary py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {saving ? "저장 중..." : "저장"}
+                </button>
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="w-full rounded-md border border-destructive py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                >
+                  {deleting ? "삭제 중..." : "삭제"}
+                </button>
+                <Link
+                  href="/admin/components"
+                  className="block w-full text-center rounded-md border border-border py-2 text-sm hover:bg-muted"
+                >
+                  목록으로
+                </Link>
+                {saveError && (
+                  <p className="text-xs text-destructive">{saveError}</p>
                 )}
               </div>
-            </div>
-          ))}
+            </PanelSection>
+          </div>
         </div>
+      </div>
+    </div>
+  );
+}
 
-        <button
-          onClick={addTextSlot}
-          className="mt-4 w-full rounded-md border border-dashed border-border py-2 text-sm text-muted-foreground hover:border-primary hover:text-primary"
+// ──────────────────────────────────────────
+// Canvas: Text Slot
+// ──────────────────────────────────────────
+function CanvasTextSlot({
+  slot,
+  scale,
+  isSelected,
+  onSelect,
+  onDelete,
+  onUpdate,
+  canvasWidth,
+  canvasHeight,
+}: {
+  slot: TextSlotTemplate;
+  scale: number;
+  isSelected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onUpdate: <K extends keyof TextSlotTemplate>(id: string, key: K, value: TextSlotTemplate[K]) => void;
+  canvasWidth: number;
+  canvasHeight: number;
+}) {
+  const dragRef = useRef<{
+    startX: number;
+    startY: number;
+    origX: number;
+    origY: number;
+  } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  function handleGripMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    onSelect();
+    setIsDragging(true);
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: slot.x,
+      origY: slot.y,
+    };
+
+    function onMouseMove(ev: MouseEvent) {
+      if (!dragRef.current) return;
+      const dx = (ev.clientX - dragRef.current.startX) / scale;
+      const dy = (ev.clientY - dragRef.current.startY) / scale;
+      const newX = Math.round(
+        Math.max(0, Math.min(canvasWidth - slot.width, dragRef.current.origX + dx))
+      );
+      const newY = Math.round(
+        Math.max(0, Math.min(canvasHeight - slot.height, dragRef.current.origY + dy))
+      );
+      onUpdate(slot.id, "x", newX);
+      onUpdate(slot.id, "y", newY);
+    }
+
+    function onMouseUp() {
+      setIsDragging(false);
+      dragRef.current = null;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
+
+  function handleContentBlur() {
+    const el = contentRef.current;
+    if (!el) return;
+    const text = el.innerText;
+    onUpdate(slot.id, "sampleText", text);
+  }
+
+  function handleContentKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Escape") {
+      contentRef.current?.blur();
+    }
+  }
+
+  const s = slot.style;
+  const showControls = isHovered || isSelected;
+
+  return (
+    <div
+      className={`absolute group/ts ${isDragging ? "opacity-80" : ""}`}
+      style={{
+        left: slot.x * scale,
+        top: slot.y * scale,
+        width: slot.width * scale,
+        minHeight: slot.height * scale,
+        zIndex: isSelected ? 20 : 10,
+      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect();
+      }}
+    >
+      {/* Drag handle bar */}
+      {showControls && (
+        <div
+          className="absolute -top-5 left-0 right-0 h-5 flex items-center justify-center gap-1 z-30"
+          style={{ pointerEvents: "none" }}
         >
-          + 텍스트 슬롯 추가
-        </button>
-      </section>
-
-      {/* 4. Image Slots Editor */}
-      <section className="rounded-lg border border-border bg-card p-6">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-base font-medium">
-            이미지 슬롯{" "}
-            <span className="text-sm font-normal text-muted-foreground">
-              ({imageSlots.length})
-            </span>
-          </h2>
-        </div>
-
-        {imageSlots.length === 0 && (
-          <p className="text-sm text-muted-foreground mb-4">
-            이미지 슬롯이 없습니다.
-          </p>
-        )}
-
-        <div className="space-y-4">
-          {imageSlots.map((slot, index) => (
-            <div
-              key={slot.id}
-              className="rounded-md border border-border bg-background p-4 space-y-4"
+          <div
+            className="flex items-center gap-0.5 bg-card border border-border rounded px-1.5 py-0.5 cursor-grab active:cursor-grabbing shadow-sm"
+            style={{ pointerEvents: "all" }}
+            onMouseDown={handleGripMouseDown}
+          >
+            <svg
+              className="w-3 h-3 text-muted-foreground"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
             >
-              {/* Header */}
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono text-muted-foreground">
-                  #{index + 1} {slot.id}
-                </span>
-                <button
-                  onClick={() => removeImageSlot(index)}
-                  className="rounded px-2 py-0.5 text-xs border border-destructive text-destructive hover:bg-destructive/10"
-                >
-                  X 삭제
-                </button>
-              </div>
+              <circle cx="9" cy="5" r="1" fill="currentColor" />
+              <circle cx="9" cy="12" r="1" fill="currentColor" />
+              <circle cx="9" cy="19" r="1" fill="currentColor" />
+              <circle cx="15" cy="5" r="1" fill="currentColor" />
+              <circle cx="15" cy="12" r="1" fill="currentColor" />
+              <circle cx="15" cy="19" r="1" fill="currentColor" />
+            </svg>
+            <span
+              className={`text-[9px] font-medium px-1 rounded ${ROLE_BADGE_COLORS[slot.role]}`}
+            >
+              {slot.role}
+            </span>
+          </div>
+        </div>
+      )}
 
-              {/* Purpose */}
-              <div>
-                {labelClass("용도 (purpose)")}
+      {/* Selection / hover border */}
+      <div
+        className={`absolute inset-0 rounded pointer-events-none transition-colors ${
+          isSelected
+            ? "ring-2 ring-blue-500"
+            : isHovered
+            ? "ring-1 ring-blue-300"
+            : ""
+        }`}
+      />
+
+      {/* Editable text content */}
+      <div
+        ref={contentRef}
+        contentEditable
+        suppressContentEditableWarning
+        onBlur={handleContentBlur}
+        onKeyDown={handleContentKeyDown}
+        onClick={(e) => e.stopPropagation()}
+        className="outline-none w-full h-full cursor-text whitespace-pre-wrap break-words"
+        style={{
+          fontSize: slot.fontSize * scale,
+          fontWeight: slot.fontWeight,
+          lineHeight: s?.lineHeight ?? 1.4,
+          color: s?.textColor ?? "#1a1a1a",
+          backgroundColor: s?.backgroundColor ?? "transparent",
+          padding: s?.padding
+            ? s.padding
+                .split(" ")
+                .map((v) => {
+                  const n = parseFloat(v);
+                  const unit = v.replace(/[\d.]/g, "");
+                  return isNaN(n) ? v : `${n * scale}${unit}`;
+                })
+                .join(" ")
+            : `${4 * scale}px`,
+          borderRadius: s?.borderRadius ?? "0",
+          border: s?.border ?? "none",
+          textAlign: s?.textAlign ?? "left",
+          letterSpacing: s?.letterSpacing ?? "normal",
+        }}
+        dangerouslySetInnerHTML={{ __html: slot.sampleText ?? slot.role }}
+      />
+
+      {/* Delete button */}
+      {showControls && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center z-30 hover:bg-destructive/80"
+          title="삭제"
+        >
+          <svg
+            className="w-2.5 h-2.5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={3}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────
+// Canvas: Image Slot
+// ──────────────────────────────────────────
+function CanvasImageSlot({
+  slot,
+  scale,
+  isSelected,
+  onSelect,
+  onDelete,
+  onUpdate,
+}: {
+  slot: ImageSlotTemplate;
+  scale: number;
+  isSelected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+  onUpdate: <K extends keyof ImageSlotTemplate>(id: string, key: K, value: ImageSlotTemplate[K]) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isHovered, setIsHovered] = useState(false);
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPreviewUrl(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  const showControls = isHovered || isSelected;
+
+  return (
+    <div
+      className={`absolute group/img ${
+        !previewUrl ? "border-2 border-dashed border-emerald-400 bg-emerald-50/40" : ""
+      }`}
+      style={{
+        left: slot.x * scale,
+        top: slot.y * scale,
+        width: slot.width * scale,
+        height: slot.height * scale,
+        zIndex: isSelected ? 15 : 5,
+      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onClick={(e) => {
+        e.stopPropagation();
+        onSelect();
+      }}
+    >
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
+      {/* Selection border */}
+      {isSelected && (
+        <div className="absolute inset-0 ring-2 ring-emerald-500 pointer-events-none rounded z-10" />
+      )}
+
+      {previewUrl ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewUrl}
+            alt={slot.purpose}
+            className="w-full h-full object-cover"
+          />
+          {showControls && (
+            <div className="absolute bottom-1 right-1 z-10 flex gap-1">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  fileRef.current?.click();
+                }}
+                className="w-6 h-6 rounded-full bg-black/50 text-white flex items-center justify-center hover:bg-black/70"
+                title="이미지 변경"
+              >
+                <svg
+                  className="w-3 h-3"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        <div
+          className="flex flex-col items-center justify-center w-full h-full cursor-pointer hover:bg-emerald-50/80 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelect();
+            fileRef.current?.click();
+          }}
+        >
+          <svg
+            className="w-5 h-5 text-emerald-500 mb-1"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+            />
+          </svg>
+          <span
+            className="text-emerald-600 text-center px-1 truncate"
+            style={{ fontSize: Math.max(9, 11 * scale) }}
+          >
+            {slot.purpose || "이미지"}
+          </span>
+        </div>
+      )}
+
+      {/* Delete button */}
+      {showControls && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center z-20 hover:bg-destructive/80"
+          title="삭제"
+        >
+          <svg
+            className="w-2.5 h-2.5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={3}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────
+// Canvas: Height Resize Handle
+// ──────────────────────────────────────────
+function CanvasResizeHandle({
+  scale,
+  height,
+  onHeightChange,
+}: {
+  scale: number;
+  height: number;
+  onHeightChange: (newHeight: number) => void;
+}) {
+  const resizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const [isResizing, setIsResizing] = useState(false);
+
+  function handleMouseDown(e: React.MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsResizing(true);
+    resizeRef.current = { startY: e.clientY, startHeight: height };
+
+    function onMouseMove(ev: MouseEvent) {
+      if (!resizeRef.current) return;
+      const delta = (ev.clientY - resizeRef.current.startY) / scale;
+      const newHeight = Math.max(100, Math.round(resizeRef.current.startHeight + delta));
+      onHeightChange(newHeight);
+    }
+
+    function onMouseUp() {
+      setIsResizing(false);
+      resizeRef.current = null;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    }
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }
+
+  return (
+    <div
+      className={`absolute bottom-0 left-0 right-0 flex items-center justify-center cursor-ns-resize z-30 transition-colors ${
+        isResizing ? "bg-blue-500/30" : "bg-blue-500/10 hover:bg-blue-500/25"
+      }`}
+      style={{ height: Math.max(6, 10 * scale) }}
+      onMouseDown={handleMouseDown}
+    >
+      <div
+        className="rounded-full bg-blue-500"
+        style={{ width: Math.max(16, 32 * scale), height: Math.max(2, 3 * scale) }}
+      />
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────
+// Panel: Text Slot Properties
+// ──────────────────────────────────────────
+function TextSlotPanel({
+  slot,
+  expandedStyle,
+  onToggleStyle,
+  onUpdate,
+  onUpdateStyle,
+}: {
+  slot: TextSlotTemplate;
+  expandedStyle: boolean;
+  onToggleStyle: () => void;
+  onUpdate: <K extends keyof TextSlotTemplate>(id: string, key: K, value: TextSlotTemplate[K]) => void;
+  onUpdateStyle: <K extends keyof TextSlotStyle>(id: string, key: K, value: TextSlotStyle[K]) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      {/* Role */}
+      <div>
+        <Label text="역할 (role)" />
+        <select
+          value={slot.role}
+          onChange={(e) => onUpdate(slot.id, "role", e.target.value as TextRole)}
+          className={selectCls}
+        >
+          {TEXT_ROLE_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Position */}
+      <div>
+        <Label text="위치" />
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <span className="text-[10px] text-muted-foreground">X</span>
+            <input
+              type="number"
+              value={slot.x}
+              onChange={(e) => onUpdate(slot.id, "x", Number(e.target.value))}
+              className={smallInputCls}
+            />
+          </div>
+          <div>
+            <span className="text-[10px] text-muted-foreground">Y</span>
+            <input
+              type="number"
+              value={slot.y}
+              onChange={(e) => onUpdate(slot.id, "y", Number(e.target.value))}
+              className={smallInputCls}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Size */}
+      <div>
+        <Label text="크기" />
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <span className="text-[10px] text-muted-foreground">너비</span>
+            <input
+              type="number"
+              value={slot.width}
+              onChange={(e) => onUpdate(slot.id, "width", Number(e.target.value))}
+              className={smallInputCls}
+            />
+          </div>
+          <div>
+            <span className="text-[10px] text-muted-foreground">높이</span>
+            <input
+              type="number"
+              value={slot.height}
+              onChange={(e) => onUpdate(slot.id, "height", Number(e.target.value))}
+              className={smallInputCls}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Font */}
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <Label text="폰트 크기" />
+          <input
+            type="number"
+            value={slot.fontSize}
+            onChange={(e) => onUpdate(slot.id, "fontSize", Number(e.target.value))}
+            className={smallInputCls}
+          />
+        </div>
+        <div>
+          <Label text="굵기" />
+          <select
+            value={slot.fontWeight}
+            onChange={(e) => onUpdate(slot.id, "fontWeight", Number(e.target.value))}
+            className={smallSelectCls}
+          >
+            {FONT_WEIGHT_OPTIONS.map((w) => (
+              <option key={w} value={w}>
+                {w}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label text="최대 글자" />
+          <input
+            type="number"
+            value={slot.maxLength ?? ""}
+            onChange={(e) =>
+              onUpdate(
+                slot.id,
+                "maxLength",
+                e.target.value === "" ? undefined : Number(e.target.value)
+              )
+            }
+            placeholder="없음"
+            className={smallInputCls}
+          />
+        </div>
+      </div>
+
+      {/* Sample text */}
+      <div>
+        <Label text="샘플 텍스트" />
+        <textarea
+          value={slot.sampleText ?? ""}
+          onChange={(e) => onUpdate(slot.id, "sampleText", e.target.value)}
+          rows={2}
+          className={`${inputCls} resize-none`}
+        />
+      </div>
+
+      {/* Style collapsible */}
+      <div>
+        <button
+          type="button"
+          onClick={onToggleStyle}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        >
+          <span>{expandedStyle ? "▼" : "▶"}</span>
+          스타일 {expandedStyle ? "접기" : "펼치기"}
+        </button>
+
+        {expandedStyle && (
+          <div className="mt-2 space-y-2 p-3 rounded-md bg-muted/30 border border-border">
+            {/* backgroundColor */}
+            <div>
+              <Label text="배경색" />
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={slot.style?.backgroundColor ?? "#ffffff"}
+                  onChange={(e) =>
+                    onUpdateStyle(slot.id, "backgroundColor", e.target.value)
+                  }
+                  className="h-7 w-8 rounded border border-border cursor-pointer"
+                />
                 <input
                   type="text"
-                  value={slot.purpose}
+                  value={slot.style?.backgroundColor ?? ""}
                   onChange={(e) =>
-                    updateImageSlot(index, "purpose", e.target.value)
+                    onUpdateStyle(slot.id, "backgroundColor", e.target.value)
                   }
-                  placeholder="예: main-product, background"
-                  className={inputCls}
+                  placeholder="#ffffff"
+                  className={`${smallInputCls} flex-1`}
+                />
+              </div>
+            </div>
+
+            {/* textColor */}
+            <div>
+              <Label text="텍스트 색상" />
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={slot.style?.textColor ?? "#000000"}
+                  onChange={(e) =>
+                    onUpdateStyle(slot.id, "textColor", e.target.value)
+                  }
+                  className="h-7 w-8 rounded border border-border cursor-pointer"
+                />
+                <input
+                  type="text"
+                  value={slot.style?.textColor ?? ""}
+                  onChange={(e) =>
+                    onUpdateStyle(slot.id, "textColor", e.target.value)
+                  }
+                  placeholder="#000000"
+                  className={`${smallInputCls} flex-1`}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {/* padding */}
+              <div>
+                <Label text="패딩" />
+                <input
+                  type="text"
+                  value={slot.style?.padding ?? ""}
+                  onChange={(e) => onUpdateStyle(slot.id, "padding", e.target.value)}
+                  placeholder="15px 25px"
+                  className={smallInputCls}
                 />
               </div>
 
-              {/* Position */}
+              {/* borderRadius */}
               <div>
-                {labelClass("위치 (position)")}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <span className="text-xs text-muted-foreground">X</span>
-                    <input
-                      type="number"
-                      value={slot.x}
-                      onChange={(e) =>
-                        updateImageSlot(index, "x", Number(e.target.value))
-                      }
-                      className={smallInputCls}
-                    />
-                  </div>
-                  <div>
-                    <span className="text-xs text-muted-foreground">Y</span>
-                    <input
-                      type="number"
-                      value={slot.y}
-                      onChange={(e) =>
-                        updateImageSlot(index, "y", Number(e.target.value))
-                      }
-                      className={smallInputCls}
-                    />
-                  </div>
-                </div>
+                <Label text="Border Radius" />
+                <input
+                  type="text"
+                  value={slot.style?.borderRadius ?? ""}
+                  onChange={(e) =>
+                    onUpdateStyle(slot.id, "borderRadius", e.target.value)
+                  }
+                  placeholder="50px"
+                  className={smallInputCls}
+                />
               </div>
 
-              {/* Size */}
+              {/* border */}
               <div>
-                {labelClass("크기 (size)")}
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <span className="text-xs text-muted-foreground">너비</span>
-                    <input
-                      type="number"
-                      value={slot.width}
-                      onChange={(e) =>
-                        updateImageSlot(index, "width", Number(e.target.value))
-                      }
-                      className={smallInputCls}
-                    />
-                  </div>
-                  <div>
-                    <span className="text-xs text-muted-foreground">높이</span>
-                    <input
-                      type="number"
-                      value={slot.height}
-                      onChange={(e) =>
-                        updateImageSlot(index, "height", Number(e.target.value))
-                      }
-                      className={smallInputCls}
-                    />
-                  </div>
-                </div>
+                <Label text="Border" />
+                <input
+                  type="text"
+                  value={slot.style?.border ?? ""}
+                  onChange={(e) => onUpdateStyle(slot.id, "border", e.target.value)}
+                  placeholder="2px solid #000"
+                  className={smallInputCls}
+                />
+              </div>
+
+              {/* textAlign */}
+              <div>
+                <Label text="정렬" />
+                <select
+                  value={slot.style?.textAlign ?? "left"}
+                  onChange={(e) =>
+                    onUpdateStyle(
+                      slot.id,
+                      "textAlign",
+                      e.target.value as "left" | "center" | "right"
+                    )
+                  }
+                  className={smallSelectCls}
+                >
+                  {TEXT_ALIGN_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* letterSpacing */}
+              <div>
+                <Label text="자간" />
+                <input
+                  type="text"
+                  value={slot.style?.letterSpacing ?? ""}
+                  onChange={(e) =>
+                    onUpdateStyle(slot.id, "letterSpacing", e.target.value)
+                  }
+                  placeholder="-0.52px"
+                  className={smallInputCls}
+                />
+              </div>
+
+              {/* lineHeight */}
+              <div>
+                <Label text="행간" />
+                <input
+                  type="number"
+                  value={slot.style?.lineHeight ?? ""}
+                  onChange={(e) =>
+                    onUpdateStyle(
+                      slot.id,
+                      "lineHeight",
+                      e.target.value === "" ? undefined : Number(e.target.value)
+                    )
+                  }
+                  placeholder="1.5"
+                  step="0.1"
+                  className={smallInputCls}
+                />
               </div>
             </div>
-          ))}
-        </div>
-
-        <button
-          onClick={addImageSlot}
-          className="mt-4 w-full rounded-md border border-dashed border-border py-2 text-sm text-muted-foreground hover:border-primary hover:text-primary"
-        >
-          + 이미지 슬롯 추가
-        </button>
-      </section>
-
-      {/* 5. Bottom actions */}
-      <div className="flex items-center gap-3 pb-8">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="rounded-md bg-primary px-6 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-        >
-          {saving ? "저장 중..." : "저장"}
-        </button>
-        <button
-          onClick={handleDelete}
-          disabled={deleting}
-          className="rounded-md border border-destructive px-4 py-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
-        >
-          {deleting ? "삭제 중..." : "삭제"}
-        </button>
-        <Link
-          href="/admin/components"
-          className="rounded-md border border-border px-4 py-2 text-sm hover:bg-muted"
-        >
-          목록으로
-        </Link>
-        {saveError && (
-          <span className="text-sm text-destructive">{saveError}</span>
+          </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────
+// Panel: Image Slot Properties
+// ──────────────────────────────────────────
+function ImageSlotPanel({
+  slot,
+  onUpdate,
+}: {
+  slot: ImageSlotTemplate;
+  onUpdate: <K extends keyof ImageSlotTemplate>(id: string, key: K, value: ImageSlotTemplate[K]) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <Label text="용도 (purpose)" />
+        <input
+          type="text"
+          value={slot.purpose}
+          onChange={(e) => onUpdate(slot.id, "purpose", e.target.value)}
+          placeholder="예: main-product, background"
+          className={inputCls}
+        />
+      </div>
+
+      {/* Position */}
+      <div>
+        <Label text="위치" />
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <span className="text-[10px] text-muted-foreground">X</span>
+            <input
+              type="number"
+              value={slot.x}
+              onChange={(e) => onUpdate(slot.id, "x", Number(e.target.value))}
+              className={smallInputCls}
+            />
+          </div>
+          <div>
+            <span className="text-[10px] text-muted-foreground">Y</span>
+            <input
+              type="number"
+              value={slot.y}
+              onChange={(e) => onUpdate(slot.id, "y", Number(e.target.value))}
+              className={smallInputCls}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Size */}
+      <div>
+        <Label text="크기" />
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <span className="text-[10px] text-muted-foreground">너비</span>
+            <input
+              type="number"
+              value={slot.width}
+              onChange={(e) => onUpdate(slot.id, "width", Number(e.target.value))}
+              className={smallInputCls}
+            />
+          </div>
+          <div>
+            <span className="text-[10px] text-muted-foreground">높이</span>
+            <input
+              type="number"
+              value={slot.height}
+              onChange={(e) => onUpdate(slot.id, "height", Number(e.target.value))}
+              className={smallInputCls}
+            />
+          </div>
+        </div>
       </div>
     </div>
   );
